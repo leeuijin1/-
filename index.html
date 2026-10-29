@@ -26,6 +26,7 @@ button.on{background:var(--acc);color:#111;border-color:var(--acc)}
 .cv{position:relative;flex:1 1 0;min-height:0}canvas{position:absolute;inset:0;width:100%;height:100%}
 #stack{flex:1 1 0;min-height:0;display:flex;flex-direction:column;gap:2px}#stack .cv{min-height:30px}
 .ph{color:var(--mut);text-align:center;padding:26px 0}
+.amp{position:absolute;left:170px;top:1px;z-index:2;display:flex;align-items:center;gap:5px;font-size:11px;color:var(--mut)}.amp input{width:90px}.amp b{color:var(--fg);min-width:28px}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:3px 0}
 .row input[type=range]{flex:1;min-width:160px}
 .val{font-variant-numeric:tabular-nums;color:var(--acc);font-weight:600}
@@ -61,12 +62,12 @@ button.on{background:var(--acc);color:#111;border-color:var(--acc)}
 const $=id=>document.getElementById(id);
 const NAMES=["도","도♯","레","레♯","미","파","파♯","솔","솔♯","라","라♯","시"];
 const T=4,FMAX=20,TWO=2*Math.PI;
-const st={act:NAMES.map((_,i)=>i==0||i==4),oct:4,f:4,prog:T,wind:false,sweep:false,hide:false,off:1};
+const st={act:NAMES.map((_,i)=>i==0||i==4),oct:4,f:4,prog:T,wind:false,sweep:false,hide:false,off:1,amp:NAMES.map(()=>1)};
 const col=i=>`hsl(${i*30},70%,50%)`;
 const freq=i=>440*Math.pow(2,(12*(st.oct+1)+i-69)/12);
 const vf=i=>freq(i)/65.406;
 const act=()=>st.act.map((a,i)=>a?i:-1).filter(i=>i>=0);
-const g=t=>{let s=st.off;for(const i of act())s+=Math.cos(TWO*vf(i)*t);return s;};
+const g=t=>{let s=st.off;for(const i of act())s+=st.amp[i]*Math.cos(TWO*vf(i)*t);return s;};
 function F(f,te){const N=500,dt=te/N;let re=0,im=0;for(let k=0;k<N;k++){const t=(k+.5)*dt,v=g(t),th=TWO*f*t;re+=v*Math.cos(th);im-=v*Math.sin(th);}return [re/N,im/N];}
 let cache=null,dirty=true;
 function curve(){if(!dirty&&cache)return cache;const a=[];for(let k=0;k<=400;k++)a.push(F(FMAX*k/400,T)[0]);cache=a;dirty=false;return a;}
@@ -81,7 +82,7 @@ function changed(){dirty=true;buildStack();renderNotes();audio();draw();}
 $("oct").onchange=e=>{st.oct=+e.target.value;changed();};
 $("hide").onclick=()=>{st.hide=!st.hide;changed();};
 // 개별 그래프 캔버스
-function buildStack(){const s=$("stack");s.innerHTML="";act().forEach(i=>{const w=document.createElement("div");w.className="cv";const c=document.createElement("canvas");c.dataset.i=i;w.appendChild(c);s.appendChild(w);});
+function buildStack(){const s=$("stack");s.innerHTML="";act().forEach(i=>{const w=document.createElement("div");w.className="cv";const c=document.createElement("canvas");c.dataset.i=i;w.appendChild(c);const bx=document.createElement("div");bx.className="amp";bx.innerHTML=`크기 <input type="range" min="0" max="2" step="0.05" value="${st.amp[i]}"><b>${st.amp[i].toFixed(2)}</b>`;const sl=bx.querySelector("input"),lb=bx.querySelector("b");sl.oninput=()=>{st.amp[i]=+sl.value;lb.textContent=st.amp[i].toFixed(2);dirty=true;updateGains();draw();};w.appendChild(bx);s.appendChild(w);});
  if(!act().length){s.innerHTML='<div class="ph">선택된 음이 없어요</div>';}}
 // 그리기
 function setup(c){const r=c.getBoundingClientRect(),d=devicePixelRatio||1;c.width=r.width*d;c.height=r.height*d;const x=c.getContext("2d");x.setTransform(d,0,0,d,0,0);return [x,r.width,r.height];}
@@ -135,7 +136,7 @@ function draw(){
  let ym=1.2;for(let k=0;k<200;k++)ym=Math.max(ym,Math.abs(g(T*k/199)));
  timeGraph($("cT"),g,css("--acc"),2.6,Math.ceil(ym*1.05),{axis:true,period:true,play:true});
  if(!st.hide)document.querySelectorAll("#stack canvas").forEach(c=>{const i=+c.dataset.i;
-  timeGraph(c,t=>Math.cos(TWO*vf(i)*t),col(i),1.6,1.2,{title:NAMES[i]+" ("+vf(i).toFixed(1)+"Hz)",period:true,play:true});});
+  timeGraph(c,t=>st.amp[i]*Math.cos(TWO*vf(i)*t),col(i),1.6,Math.max(1.2,st.amp[i]*1.1),{title:NAMES[i]+" ("+vf(i).toFixed(1)+"Hz)",period:true,play:true});});
  drawP();drawF();
 }
 function setF(v){st.f=Math.min(FMAX,Math.max(0,Math.round(v*1000)/1000));st.sweep=false;draw();}
@@ -153,9 +154,10 @@ function loop(ts){if(!st.wind&&!st.sweep)return;const dt=last?Math.min((ts-last)
  if(st.sweep){st.f+=dt*FMAX/40*spd();if(st.f>=FMAX){st.f=FMAX;st.sweep=false;}}
  draw();requestAnimationFrame(loop);}
 // 소리
-let ac=null,oscs=[],master=null,playing=false;
-function audio(){if(!playing)return;oscs.forEach(o=>o.stop());oscs=[];const A=act();
- A.forEach(i=>{const o=ac.createOscillator(),gn=ac.createGain();o.frequency.value=freq(i);gn.gain.value=.5/A.length;o.connect(gn).connect(master);o.start();oscs.push(o);});}
+let ac=null,oscs=[],gains=[],master=null,playing=false;
+function updateGains(){const n=Math.max(1,act().length);gains.forEach(([i,gn])=>gn.gain.value=.5*st.amp[i]/n);}
+function audio(){if(!playing)return;oscs.forEach(o=>o.stop());oscs=[];gains=[];const A=act();
+ A.forEach(i=>{const o=ac.createOscillator(),gn=ac.createGain();o.frequency.value=freq(i);gn.gain.value=.5*st.amp[i]/A.length;gains.push([i,gn]);o.connect(gn).connect(master);o.start();oscs.push(o);});}
 $("snd").onclick=()=>{
  if(!playing){try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();master=master||ac.createGain();master.gain.value=.5;master.connect(ac.destination);}catch(e){return;}
   ac.resume();playing=true;$("snd").classList.add("on");$("snd").textContent="⏹ 소리 정지";audio();}
